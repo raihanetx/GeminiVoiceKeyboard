@@ -1,0 +1,83 @@
+<?xml version="1.0" encoding="utf-8"?>
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="wrap_content"
+    android:orientation="vertical"
+    android:background="@color/keyboard_bg"
+    android:padding="4dp">
+
+    <!-- Text suggestion bar -->
+    <LinearLayout
+        android:id="@+id/suggestion_bar"
+        android:layout_width="match_parent"
+        android:layout_height="36dp"
+        android:orientation="horizontal"
+        android:gravity="center_vertical"
+        android:paddingHorizontal="8dp">
+
+        <TextView
+            android:id="@+id/suggestion_text"
+            android:layout_width="0dp"
+            android:layout_height="match_parent"
+            android:layout_weight="1"
+            android:gravity="center_vertical"
+            android:textColor="@color/on_surface"
+            android:textSize="14sp"
+            android:singleLine="true"
+            android:ellipsize="end" />
+
+        <ImageButton
+            android:id="@+id/btn_mic"
+            android:layout_width="40dp"
+            android:layout_height="40dp"
+            android:src="@android:drawable/ic_btn_speak_now"
+            android:background="?attr/selectableItemBackgroundBorderless"
+            android:contentDescription="@string/mic_button_desc"
+            android:padding="8dp" />
+
+    </LinearLayout>
+
+    <!-- Keyboard rows container -->
+    <FrameLayout
+        android:id="@+id/keyboard_container"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content" />
+
+    <!-- Voice overlay -->
+    <FrameLayout
+        android:id="@+id/voice_overlay"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:visibility="gone"
+        android:background="@color/surface">
+
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="vertical"
+            android:gravity="center"
+            android:padding="24dp">
+
+            <TextView
+                android:id="@+id/voice_status"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="@string/tap_to_speak"
+                android:textSize="16sp"
+                android:textColor="@color/on_surface" />
+
+            <ImageButton
+                android:id="@+id/btn_voice_stop"
+                android:layout_width="64dp"
+                android:layout_height="64dp"
+                android:src="@android:drawable/ic_btn_speak_now"
+                android:background="@drawable/mic_button_bg"
+                android:contentDescription="@string/mic_button_desc"
+                android:layout_marginTop="16dp"
+                android:padding="16dp" />
+
+        </LinearLayout>
+
+    </FrameLayout>
+
+</LinearLayout>
