@@ -7,15 +7,14 @@ import android.util.Log
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
-import kotlinx.coroutines.cancelAndJoin
-import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
-import kotlinx.coroutines.withContext
+import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.OkHttpClient
 import okhttp3.Request
+import okhttp3.RequestBody.Companion.toRequestBody
 import okhttp3.Response
 import okhttp3.WebSocket
 import okhttp3.WebSocketListener
@@ -33,6 +32,7 @@ class GeminiLiveManager {
         private const val CHANNEL_CONFIG = AudioFormat.CHANNEL_IN_MONO
         private const val AUDIO_FORMAT = AudioFormat.ENCODING_PCM_16BIT
         private const val CHUNK_SIZE = 4096
+        private const val AUTH_TOKENS_URL = "https://generativelanguage.googleapis.com/v1alpha/authTokens:create"
     }
 
     private var webSocket: WebSocket? = null
@@ -40,6 +40,7 @@ class GeminiLiveManager {
     private var recordingJob: Job? = null
     private var scopeJob: Job? = null
     private var scope: CoroutineScope? = null
+    private var httpClient: OkHttpClient? = null
 
     private val _state = MutableStateFlow<SessionState>(SessionState.Idle)
     val state: StateFlow<SessionState> = _state
@@ -68,17 +69,61 @@ class GeminiLiveManager {
         scope = clientScope
         scopeJob = clientJob
 
-        val client = OkHttpClient.Builder()
+        httpClient = OkHttpClient.Builder()
             .readTimeout(0, TimeUnit.MILLISECONDS)
+            .connectTimeout(30, TimeUnit.SECONDS)
             .build()
 
-        val url = "wss://generativelanguage.googleapis.com/ws/google.ai.generativelanguage.v1alpha.GenerativeService.BidiGenerateContentConstrained?key=$apiKey"
+        clientScope.launch {
+            try {
+                val token = getEphemeralToken(apiKey)
+                if (token == null) {
+                    _state.value = SessionState.Error("Failed to get auth token")
+                    return@launch
+                }
+                connectWebSocket(token, onTranscription)
+            } catch (e: Exception) {
+                Log.e(TAG, "Connection error", e)
+                _state.value = SessionState.Error(e.message ?: "Connection failed")
+            }
+        }
+    }
+
+    private fun getEphemeralToken(apiKey: String): String? {
+        val requestBody = JSONObject().apply {
+            put("uses", 1)
+        }.toString()
+
+        val request = Request.Builder()
+            .url("$AUTH_TOKENS_URL?key=$apiKey")
+            .post(requestBody.toRequestBody("application/json".toMediaType()))
+            .build()
+
+        val client = httpClient ?: OkHttpClient()
+        val response = client.newCall(request).execute()
+
+        return if (response.isSuccessful) {
+            val body = response.body?.string()
+            val json = JSONObject(body)
+            val name = json.optString("name")
+            Log.d(TAG, "Got ephemeral token")
+            name
+        } else {
+            Log.e(TAG, "Token request failed: ${response.code} ${response.message}")
+            val errorBody = response.body?.string()
+            Log.e(TAG, "Error body: $errorBody")
+            null
+        }
+    }
+
+    private fun connectWebSocket(token: String, onTranscription: (String) -> Unit) {
+        val url = "wss://generativelanguage.googleapis.com/ws/google.ai.generativelanguage.v1alpha.GenerativeService.BidiGenerateContentConstrained?access_token=$token"
 
         val request = Request.Builder()
             .url(url)
             .build()
 
-        webSocket = client.newWebSocket(request, object : WebSocketListener() {
+        webSocket = httpClient?.newWebSocket(request, object : WebSocketListener() {
             override fun onOpen(webSocket: WebSocket, response: Response) {
                 Log.d(TAG, "WebSocket opened")
                 sendSetup(webSocket)
@@ -89,7 +134,7 @@ class GeminiLiveManager {
             }
 
             override fun onFailure(webSocket: WebSocket, t: Throwable, response: Response?) {
-                Log.e(TAG, "WebSocket failure", t)
+                Log.e(TAG, "WebSocket failure: ${t.message}", t)
                 _state.value = SessionState.Error(t.message ?: "Connection failed")
                 stop()
             }
@@ -97,7 +142,6 @@ class GeminiLiveManager {
             override fun onClosing(webSocket: WebSocket, code: Int, reason: String) {
                 Log.d(TAG, "WebSocket closing: $code $reason")
                 webSocket.close(1000, null)
-                _state.value = SessionState.Idle
             }
         })
     }
@@ -118,7 +162,7 @@ class GeminiLiveManager {
                 })
                 put("systemInstruction", JSONObject().apply {
                     put("parts", JSONArray().put(JSONObject().apply {
-                        put("text", "You are a voice input assistant. Listen to what the user says and repeat back exactly what they said as plain text. Do not add any commentary. Just transcribe their speech.")
+                        put("text", "You are a voice-to-text transcription assistant. When the user speaks, listen carefully and repeat back exactly what they said, word for word. Do not add any commentary, greeting, or explanation. Just output the exact transcription of their speech.")
                     }))
                 })
                 put("inputAudioTranscription", JSONObject())
@@ -150,55 +194,56 @@ class GeminiLiveManager {
 
             val serverContent = json.optJSONObject("serverContent") ?: return
 
-            // Handle input transcription (what user said)
+            // Input transcription - what the user said (this is what we want)
             val inputTranscription = serverContent.optJSONObject("inputTranscription")
             if (inputTranscription != null) {
                 val userText = inputTranscription.optString("text", "")
+                val finished = inputTranscription.optBoolean("finished", false)
                 if (userText.isNotEmpty()) {
-                    Log.d(TAG, "User said: $userText")
-                    _transcribedText.value = userText
-                    onTranscription(userText)
+                    Log.d(TAG, "Input transcription (finished=$finished): $userText")
+                    if (finished) {
+                        _transcribedText.value = userText
+                        onTranscription(userText)
+                    }
                 }
             }
 
-            // Handle output transcription (what Gemini said)
+            // Output transcription - what Gemini responded (for logging)
             val outputTranscription = serverContent.optJSONObject("outputTranscription")
             if (outputTranscription != null) {
                 val geminiText = outputTranscription.optString("text", "")
                 if (geminiText.isNotEmpty()) {
-                    Log.d(TAG, "Gemini said: $geminiText")
+                    Log.d(TAG, "Output transcription: $geminiText")
                 }
             }
 
-            // Handle audio data from model
+            // Handle audio data from model (we ignore this for keyboard)
             val modelTurn = serverContent.optJSONObject("modelTurn")
             if (modelTurn != null) {
                 val parts = modelTurn.optJSONArray("parts")
                 if (parts != null) {
                     for (i in 0 until parts.length()) {
                         val part = parts.getJSONObject(i)
-                        val inlineData = part.optJSONObject("inlineData")
-                        if (inlineData != null) {
-                            // Audio data received - we don't need to play it for a keyboard
-                            Log.d(TAG, "Received audio response chunk")
+                        if (part.has("inlineData")) {
+                            Log.d(TAG, "Received audio chunk (ignored)")
                         }
                     }
                 }
             }
 
-            // Handle turn complete
+            // Turn complete
             if (serverContent.optBoolean("turnComplete", false)) {
                 Log.d(TAG, "Turn complete")
                 _state.value = SessionState.Connected
             }
 
-            // Handle interruption
+            // Interrupted
             if (serverContent.optBoolean("interrupted", false)) {
                 Log.d(TAG, "Interrupted")
             }
 
         } catch (e: Exception) {
-            Log.e(TAG, "Error parsing response", e)
+            Log.e(TAG, "Error parsing response: ${e.message}", e)
         }
     }
 
@@ -209,6 +254,7 @@ class GeminiLiveManager {
         val bufferSize = AudioRecord.getMinBufferSize(SEND_SAMPLE_RATE, CHANNEL_CONFIG, AUDIO_FORMAT)
         if (bufferSize == AudioRecord.ERROR || bufferSize == AudioRecord.ERROR_BAD_VALUE) {
             Log.e(TAG, "Invalid buffer size")
+            _state.value = SessionState.Error("Audio config error")
             return
         }
 
@@ -223,11 +269,12 @@ class GeminiLiveManager {
 
             if (audioRecord?.state != AudioRecord.STATE_INITIALIZED) {
                 Log.e(TAG, "AudioRecord not initialized")
+                _state.value = SessionState.Error("Microphone not available")
                 return
             }
 
             audioRecord?.startRecording()
-            Log.d(TAG, "Recording started")
+            Log.d(TAG, "Recording started, buffer size: $bufferSize")
 
             recordingJob = clientScope.launch {
                 val buffer = ByteArray(CHUNK_SIZE)
@@ -257,15 +304,6 @@ class GeminiLiveManager {
         webSocket?.send(message.toString())
     }
 
-    fun sendText(text: String) {
-        val message = JSONObject().apply {
-            put("realtimeInput", JSONObject().apply {
-                put("text", text)
-            })
-        }
-        webSocket?.send(message.toString())
-    }
-
     fun stop() {
         try {
             recordingJob?.cancel()
@@ -277,6 +315,9 @@ class GeminiLiveManager {
 
             webSocket?.close(1000, "User stopped")
             webSocket = null
+
+            httpClient?.dispatcher?.executorService?.shutdown()
+            httpClient = null
 
             scopeJob?.cancel()
             scopeJob = null
