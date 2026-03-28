@@ -25,7 +25,7 @@ class GeminiKeyboardService : InputMethodService(), LifecycleOwner, ViewModelSto
 
     private lateinit var lifecycleRegistry: LifecycleRegistry
     private lateinit var viewModelStoreInstance: ViewModelStore
-    private lateinit var geminiManager: GeminiLiveManager
+    private val geminiManager = GeminiLiveManager()
     private var isVoiceActive = false
 
     override val lifecycle: Lifecycle get() = lifecycleRegistry
@@ -35,7 +35,6 @@ class GeminiKeyboardService : InputMethodService(), LifecycleOwner, ViewModelSto
         super.onCreate()
         lifecycleRegistry = LifecycleRegistry(this)
         viewModelStoreInstance = ViewModelStore()
-        geminiManager = GeminiLiveManager(this)
         lifecycleRegistry.currentState = Lifecycle.State.CREATED
     }
 
@@ -76,27 +75,38 @@ class GeminiKeyboardService : InputMethodService(), LifecycleOwner, ViewModelSto
         // Observe Gemini state
         lifecycleScope.launch {
             repeatOnLifecycle(Lifecycle.State.STARTED) {
-                geminiManager.state.collect { state ->
-                    when (state) {
-                        is GeminiLiveManager.SessionState.Connecting -> {
-                            voiceStatus.text = getString(R.string.connecting)
+                launch {
+                    geminiManager.state.collect { state ->
+                        when (state) {
+                            is GeminiLiveManager.SessionState.Connecting -> {
+                                voiceStatus.text = getString(R.string.connecting)
+                            }
+                            is GeminiLiveManager.SessionState.Connected -> {
+                                voiceStatus.text = getString(R.string.listening)
+                                btnVoiceStop.setBackgroundResource(R.drawable.mic_button_active_bg)
+                            }
+                            is GeminiLiveManager.SessionState.Listening -> {
+                                voiceStatus.text = getString(R.string.listening)
+                                btnVoiceStop.setBackgroundResource(R.drawable.mic_button_active_bg)
+                            }
+                            is GeminiLiveManager.SessionState.Processing -> {
+                                voiceStatus.text = "Processing…"
+                            }
+                            is GeminiLiveManager.SessionState.Error -> {
+                                voiceStatus.text = "${getString(R.string.error_connection)}: ${state.message}"
+                            }
+                            is GeminiLiveManager.SessionState.Idle -> {
+                                voiceStatus.text = getString(R.string.tap_to_speak)
+                                btnVoiceStop.setBackgroundResource(R.drawable.mic_button_bg)
+                            }
                         }
-                        is GeminiLiveManager.SessionState.Listening -> {
-                            voiceStatus.text = getString(R.string.listening)
-                            btnVoiceStop.setBackgroundResource(R.drawable.mic_button_active_bg)
-                        }
-                        is GeminiLiveManager.SessionState.Processing -> {
-                            voiceStatus.text = "Processing…"
-                        }
-                        is GeminiLiveManager.SessionState.Result -> {
-                            suggestionText.text = state.text
-                        }
-                        is GeminiLiveManager.SessionState.Error -> {
-                            voiceStatus.text = "${getString(R.string.error_connection)}: ${state.message}"
-                        }
-                        is GeminiLiveManager.SessionState.Idle -> {
-                            voiceStatus.text = getString(R.string.tap_to_speak)
-                            btnVoiceStop.setBackgroundResource(R.drawable.mic_button_bg)
+                    }
+                }
+                launch {
+                    geminiManager.transcribedText.collect { text ->
+                        if (text.isNotEmpty()) {
+                            suggestionText.text = text
+                            commitText(text)
                         }
                     }
                 }
@@ -114,18 +124,21 @@ class GeminiKeyboardService : InputMethodService(), LifecycleOwner, ViewModelSto
         if (isVoiceActive) {
             isVoiceActive = false
             voiceOverlay.visibility = View.GONE
-            lifecycleScope.launch {
-                geminiManager.stopSession()
-            }
+            geminiManager.stop()
         } else {
             isVoiceActive = true
             voiceOverlay.visibility = View.VISIBLE
             voiceStatus.text = getString(R.string.connecting)
-            lifecycleScope.launch {
-                geminiManager.startSession { transcription ->
-                    lifecycleScope.launch {
-                        commitText(transcription)
-                    }
+
+            val apiKey = ApiKeyStore.get(this)
+            if (apiKey.isBlank()) {
+                voiceStatus.text = getString(R.string.enter_api_key)
+                return
+            }
+
+            geminiManager.connect(apiKey) { transcription ->
+                lifecycleScope.launch {
+                    commitText(transcription)
                 }
             }
         }
@@ -154,6 +167,7 @@ class GeminiKeyboardService : InputMethodService(), LifecycleOwner, ViewModelSto
     }
 
     override fun onDestroy() {
+        geminiManager.stop()
         lifecycleRegistry.currentState = Lifecycle.State.DESTROYED
         super.onDestroy()
     }

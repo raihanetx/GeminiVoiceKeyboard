@@ -3,8 +3,6 @@ plugins {
     id("org.jetbrains.kotlin.android")
     id("org.jetbrains.kotlin.plugin.compose")
     id("org.jetbrains.kotlin.plugin.serialization")
-    id("com.google.devtools.ksp")
-    id("com.google.gms.google-services")
 }
 
 android {
@@ -17,8 +15,6 @@ android {
         targetSdk = 36
         versionCode = 1
         versionName = "1.0"
-
-        testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
 
     buildTypes {
@@ -62,25 +58,9 @@ dependencies {
     implementation("androidx.compose.material3:material3")
     debugImplementation("androidx.compose.ui:ui-tooling")
 
-    // Firebase BOM
-    implementation(platform("com.google.firebase:firebase-bom:34.11.0"))
-
-    // Firebase AI Logic (for Gemini Live API)
-    implementation("com.google.firebase:firebase-ai")
-
-    // Google Services
-    implementation("com.google.android.gms:play-services-auth:21.3.0")
-
-    // Audio recording
-    implementation("androidx.media:media:1.7.0")
+    // OkHttp for WebSocket
+    implementation("com.squareup.okhttp3:okhttp:4.12.0")
 
     // Kotlinx Serialization
     implementation("org.jetbrains.kotlinx:kotlinx-serialization-json:1.7.3")
-
-    // Testing
-    testImplementation("junit:junit:4.13.2")
-    androidTestImplementation("androidx.test.ext:junit:1.2.1")
-    androidTestImplementation("androidx.test.espresso:espresso-core:3.6.1")
-    androidTestImplementation(platform("androidx.compose:compose-bom:2024.12.01"))
-    androidTestImplementation("androidx.compose.ui:ui-test-junit4")
 }
