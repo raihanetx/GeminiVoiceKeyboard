@@ -21,7 +21,7 @@ class GeminiLiveManager(private val context: android.content.Context) {
 
     companion object {
         private const val TAG = "GeminiLiveManager"
-        private const val MODEL_NAME = "gemini-2.5-flash-native-audio-preview-09-2025"
+        private const val MODEL_NAME = "gemini-3.1-flash-live-preview-03-2026"
     }
 
     private var liveSession: LiveSession? = null
