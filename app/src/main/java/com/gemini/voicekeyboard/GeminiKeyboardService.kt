@@ -33,12 +33,14 @@ class GeminiKeyboardService : InputMethodService(), LifecycleOwner, ViewModelSto
 
     override fun onCreate() {
         super.onCreate()
+        Log.d("GeminiKeyboardService", "onCreate() called")
         lifecycleRegistry = LifecycleRegistry(this)
         viewModelStoreInstance = ViewModelStore()
         lifecycleRegistry.currentState = Lifecycle.State.CREATED
     }
 
     override fun onCreateInputView(): View {
+        Log.d("GeminiKeyboardService", "onCreateInputView() called")
         lifecycleRegistry.currentState = Lifecycle.State.STARTED
 
         val view = layoutInflater.inflate(R.layout.keyboard_layout, null)
